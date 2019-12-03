@@ -22,10 +22,10 @@ const int motorAPWMPin = 2;
 const int motorBPWMPin = 7;
 
 // The desired speed for the robot to move at
-int DesiredSpeed = 100;
+int DesiredSpeed = 60;
 
 // Steering gain to adjust how hard the turns can be
-const int SteeringGain = 15;
+const int SteeringGain = 20;
 
 // Pointing gain is how much we turn the echo sensor
 const int PointingGain = 20;
@@ -113,7 +113,7 @@ void AdjustMotorSpeeds(float PathError) {
   // Serial.print(RightMotorSpeed);
 
   // If the robot is too far to the right, stop the left motor to turn tighter
-  if (PathError <= 1.5) {
+  if (PathError <= -1.5) {
     LeftMotorSpeed = 0;
   }
 
@@ -185,7 +185,7 @@ int ReadLineSensor(int SensorAnalogInPin, int SensorDigitalOutPin) {
 }
 
 int UpdatePointingAngle(float PathError) {
-  //
+  // if the error is a bogus value, use the previous servo value
   if (PathError == 10) {
     return Servo1.read();
   }
