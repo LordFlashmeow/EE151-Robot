@@ -1,15 +1,29 @@
 #include <Servo.h>
 
+#include <TimerOne.h>
+
+
+int ledState = LOW;
+int ledPin = 10;
+int buzzerPin = 50;
+
+
 // Set servo pin
 const int servoPin = 11;
 
 Servo Servo1;
 
-// Turning direction
-// 0b00 is forwards
-// 0b01 is turning right
-// 0b10 is turning left
-byte TurningDirection = 0b00;
+// Servo that controls the egg drop
+const int eggServoPin = 9;
+Servo eggServo;
+
+
+// Pins used for rangefinder
+const int RangeTriggerPin = 40;
+const int RangeEchoPin = 41;
+
+const unsigned long RangeTimeout = 4000;
+
 
 // Set motor pins
 const int motorAPin1 = 3; // Right Motor
@@ -35,12 +49,26 @@ const int threshold = 100;
 
 void setup() {
 
-  Serial.begin(9600);
+  Serial.begin(57600);
 
   // Attach and center servo
   Servo1.attach(servoPin);
   Servo1.write(90);
 
+  eggServo.attach(eggServoPin);
+  eggServo.write(0);
+
+  // Rangefinder
+  pinMode(RangeTriggerPin, OUTPUT);
+  pinMode(RangeEchoPin, INPUT);
+
+  // Initialize timer, which handles lights and beeper outside of the main thread
+  Timer1.initialize(500000);   //Set the period to 500k microseconds, or 500 miliseconds
+  Timer1.attachInterrupt(beepAndFlashLED);
+
+  // Initialize LED and buzzer
+  pinMode(ledPin, OUTPUT);
+  pinMode(buzzerPin, OUTPUT);
 
   // Set up the motor pins
   pinMode(motorAPin1, OUTPUT);
@@ -58,22 +86,36 @@ void setup() {
   analogWrite(motorAPWMPin, 0);
   analogWrite(motorBPWMPin, 0);
 
-
 }
 
-byte SensorCode = 0;
-float PathError = 0;
-
 void loop() {
-  SensorCode = GetPathSensorStates();
-  PathError = SensePathPositionError(SensorCode);
+  // Obstacle detection
+  if (measureDistance() < 7) {
+    StopMotors();
+ 
+    // make a noise if there is an obstacle in the way
+    // Repeat check for obstacle every 100 ms
+    tone(buzzerPin, 600);
+    delay(100);
+    
+    // Restart the loop to check again
+    return;
+  }
+  
+  StartMotors();
+  FollowLine();
+  
+}
+
+void FollowLine() {
+  byte SensorCode = GetPathSensorStates();
+  float PathError = SensePathPositionError(SensorCode);
 
 
-  if (PathError != 10) {  // If we get a non-bogus path error
+  if (PathError != 10) {  // If we get a non-bogus path error, change motor speeds
     AdjustMotorSpeeds(PathError);
     UpdatePointingAngle(PathError);
   }
-
 }
 
 void Move(int LeftPWM, int RightPWM) {
@@ -91,7 +133,7 @@ void Move(int LeftPWM, int RightPWM) {
 
 void AdjustMotorSpeeds(float PathError) {
 
-  // Detect bogus value and maintain current turn
+  // Detect bogus value and maintain current motor speeds
   if (PathError == 10) {
     return;
   }
@@ -106,11 +148,6 @@ void AdjustMotorSpeeds(float PathError) {
   // Contstrain the motor speeds to acceptable values
   RightMotorSpeed = constrain(RightMotorSpeed, 0, 255);
   LeftMotorSpeed = constrain(LeftMotorSpeed, 0, 255);
-
-  // Serial.print("  LeftMotorSpeed: ");
-  // Serial.print(LeftMotorSpeed);
-  // Serial.print("  RightMotorSpeed: ");
-  // Serial.print(RightMotorSpeed);
 
   // If the robot is too far to the right, stop the left motor to turn tighter
   if (PathError <= -1.5) {
@@ -136,7 +173,6 @@ float SensePathPositionError(byte PathSensorStates) {
     case 3:
       return 1.5;
     case 4:
-      TurningDirection = 0;
       return 0;
     case 6:
       return 0.5;
@@ -148,6 +184,9 @@ float SensePathPositionError(byte PathSensorStates) {
       return -2.0;
     case 24:
       return -1.5;
+
+    case 31:
+      DropEgg();
 
     default:
       return 10;
@@ -164,17 +203,13 @@ byte GetPathSensorStates() {
   bitWrite(code, 1, ReadLineSensor(A12, 49));
   bitWrite(code, 0, ReadLineSensor(A11, 51));
 
-  // Serial.print("Sensor state: ");
-  // Serial.println(code);
-
   return code;
 }
 
 int ReadLineSensor(int SensorAnalogInPin, int SensorDigitalOutPin) {
   // Reads a light sensor and returns true if it sees black
   int value = analogRead(SensorAnalogInPin);  // Read the brightness
-  // Serial.print(value);
-  // Serial.print("  ");
+
   if (value > threshold) {
     digitalWrite(SensorDigitalOutPin, HIGH);
     return 1;
@@ -193,4 +228,84 @@ int UpdatePointingAngle(float PathError) {
   int SensorPointingAngle = 90 + PointingGain * PathError;
   Servo1.write(SensorPointingAngle);
   return 90 + 10 * PathError;
+}
+
+void StopMotors() {
+  //     Left motor
+  digitalWrite(motorAPin1, HIGH);
+  digitalWrite(motorAPin2, HIGH);
+  // Right motor
+  digitalWrite(motorBPin1, HIGH);
+  digitalWrite(motorBPin2, HIGH);
+}
+
+void StartMotors() {
+  //     Left motor
+  digitalWrite(motorAPin1, LOW);
+  digitalWrite(motorAPin2, HIGH);
+  // Right motor
+  digitalWrite(motorBPin1, LOW);
+  digitalWrite(motorBPin2, HIGH);
+}
+
+void DropEgg() {
+  // Keep advancing until 2.7 in away
+  while (measureDistance() > 2.7) {
+    FollowLine();
+  }
+
+
+  // Stop the motors
+  StopMotors();
+
+  // Stop the led and beeping
+  Timer1.detachInterrupt();
+
+  delay(250);
+  eggServo.write(75);
+
+  musicSetup();
+
+  while (true) {
+    playMusic();
+  }
+}
+
+float measureDistance() {
+  // Activate the distance sensor and update the value of Distance
+  digitalWrite(RangeTriggerPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(RangeTriggerPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(RangeTriggerPin, LOW);
+
+  float Distance;
+
+  unsigned long EchoDelay = pulseIn(RangeEchoPin, HIGH, RangeTimeout);
+
+  if (EchoDelay == 0.0) {   // rangefinder hit timeout, assume a large distance
+    return 50;
+  }
+
+  // if the object is actually less than 2 inches away, the scanner may give bad results
+  if (EchoDelay < 300) {
+    return 0;
+  }
+
+  Distance = (EchoDelay / 74.0) / 2.0;
+
+  return Distance;
+}
+
+void beepAndFlashLED() {
+  digitalWrite(ledPin, ledState);
+
+  if (ledState) {
+    tone(buzzerPin, 400);
+  } else {
+    noTone(buzzerPin);
+  }
+
+  ledState = !ledState; // Invert the state
+
 }
