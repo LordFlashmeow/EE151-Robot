@@ -4,14 +4,14 @@
 
 
 int ledState = LOW;
-int ledPin = 10;
-int buzzerPin = 50;
+const int ledPin = 10;
+const int buzzerPin = 50;
 
 
 // Set servo pin
-const int servoPin = 11;
+const int rangefinderServoPin = 11;
 
-Servo Servo1;
+Servo rangefinderServo;
 
 // Servo that controls the egg drop
 const int eggServoPin = 9;
@@ -36,7 +36,7 @@ const int motorAPWMPin = 2;
 const int motorBPWMPin = 7;
 
 // The desired speed for the robot to move at
-int DesiredSpeed = 60;
+const int DesiredSpeed = 60;
 
 // Steering gain to adjust how hard the turns can be
 const int SteeringGain = 20;
@@ -52,8 +52,8 @@ void setup() {
   Serial.begin(57600);
 
   // Attach and center servo
-  Servo1.attach(servoPin);
-  Servo1.write(90);
+  rangefinderServo.attach(rangefinderServoPin);
+  rangefinderServo.write(90);
 
   eggServo.attach(eggServoPin);
   eggServo.write(0);
@@ -86,25 +86,28 @@ void setup() {
   analogWrite(motorAPWMPin, 0);
   analogWrite(motorBPWMPin, 0);
 
+  // delay 3 seconds to allow time to load egg
+  delay(3000);
+
 }
 
 void loop() {
   // Obstacle detection
-  if (measureDistance() < 7) {
+  if (measureDistance() < 4) {
     StopMotors();
- 
+
     // make a noise if there is an obstacle in the way
     // Repeat check for obstacle every 100 ms
     tone(buzzerPin, 600);
     delay(100);
-    
+
     // Restart the loop to check again
     return;
   }
-  
+
   StartMotors();
   FollowLine();
-  
+
 }
 
 void FollowLine() {
@@ -185,7 +188,7 @@ float SensePathPositionError(byte PathSensorStates) {
     case 24:
       return -1.5;
 
-    case 31:
+    case 31:  // All the sensors are reading a black line
       DropEgg();
 
     default:
@@ -222,16 +225,16 @@ int ReadLineSensor(int SensorAnalogInPin, int SensorDigitalOutPin) {
 int UpdatePointingAngle(float PathError) {
   // if the error is a bogus value, use the previous servo value
   if (PathError == 10) {
-    return Servo1.read();
+    return rangefinderServo.read();
   }
 
   int SensorPointingAngle = 90 + PointingGain * PathError;
-  Servo1.write(SensorPointingAngle);
+  rangefinderServo.write(SensorPointingAngle);
   return 90 + 10 * PathError;
 }
 
 void StopMotors() {
-  //     Left motor
+  // Left motor
   digitalWrite(motorAPin1, HIGH);
   digitalWrite(motorAPin2, HIGH);
   // Right motor
@@ -240,7 +243,7 @@ void StopMotors() {
 }
 
 void StartMotors() {
-  //     Left motor
+  // Left motor
   digitalWrite(motorAPin1, LOW);
   digitalWrite(motorAPin2, HIGH);
   // Right motor
@@ -254,32 +257,32 @@ void DropEgg() {
     FollowLine();
   }
 
-
   // Stop the motors
   StopMotors();
 
   // Stop the led and beeping
   Timer1.detachInterrupt();
 
+  // Wait for robot to come to a stop before dropping egg
   delay(250);
   eggServo.write(75);
 
+  // run setup for music file
   musicSetup();
 
+  // play music forever until turned off
   while (true) {
     playMusic();
   }
 }
 
 float measureDistance() {
-  // Activate the distance sensor and update the value of Distance
+  // Activate the distance sensor
   digitalWrite(RangeTriggerPin, LOW);
   delayMicroseconds(2);
   digitalWrite(RangeTriggerPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(RangeTriggerPin, LOW);
-
-  float Distance;
 
   unsigned long EchoDelay = pulseIn(RangeEchoPin, HIGH, RangeTimeout);
 
@@ -292,14 +295,17 @@ float measureDistance() {
     return 0;
   }
 
-  Distance = (EchoDelay / 74.0) / 2.0;
+  float Distance = (EchoDelay / 74.0) / 2.0;
 
   return Distance;
 }
 
 void beepAndFlashLED() {
+  // either turn led on or off, depending on state
   digitalWrite(ledPin, ledState);
 
+  // if the ledstate is high, turn on the buzzer, otherwise turn it off
+  // creates a beeping effect
   if (ledState) {
     tone(buzzerPin, 400);
   } else {
